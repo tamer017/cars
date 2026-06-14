@@ -1,43 +1,115 @@
-# cars
+# Car Price Prediction — Regression Analysis
 
-> A centralized framework for modeling, managing, and analyzing automotive fleet telemetry and vehicle lifecycle data.
+> **End-to-end regression pipeline predicting used car market prices from specifications, comparing Linear Regression, Ridge, Lasso, Random Forest, and XGBoost with feature engineering and SHAP explainability.**
+
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![Scikit-learn](https://img.shields.io/badge/Scikit--learn-1.0+-orange.svg)](https://scikit-learn.org/)
+[![XGBoost](https://img.shields.io/badge/XGBoost-1.6+-blue.svg)](https://xgboost.readthedocs.io/)
+
+---
 
 ## Overview
-The `cars` repository provides a robust foundation for tracking vehicle performance metrics, maintenance schedules, and operational telemetry. By consolidating disparate data points—ranging from engine diagnostics to real-time GPS positioning—this project addresses the fragmentation often found in fleet management systems, where vehicle health and logistical data are typically siloed across multiple legacy platforms.
 
-The technical approach utilizes a modular, event-driven architecture designed to ingest high-frequency sensor data and normalize it into a unified schema. This allows for seamless integration with downstream analytics engines and reporting dashboards, ensuring that stakeholders have a single source of truth for fleet-wide operational efficiency.
+This project builds a **used car price prediction system** using regression techniques. The dataset contains vehicle specifications (make, model, year, mileage, engine size, fuel type) and target sale prices. The goal is to train a model accurate enough for pricing guidance at dealerships or online marketplaces.
 
-By implementing this framework, organizations can transition from reactive maintenance models to predictive strategies. The system is engineered to identify performance degradation patterns before they result in critical failures, thereby reducing downtime and optimizing the total cost of ownership for large-scale vehicle deployments.
+---
 
-## Architecture
-The system follows a microservices-oriented architecture consisting of three primary layers: the Ingestion Layer, the Processing Engine, and the Persistence Store. 
+## Dataset
 
-Data enters the system via a RESTful API gateway, which validates incoming telemetry packets against predefined JSON schemas. Once validated, messages are published to an asynchronous message broker, which decouples the ingestion process from the heavy-lifting analytical tasks. The Processing Engine consumes these messages to perform real-time normalization and anomaly detection, subsequently persisting the processed state into a time-series database for historical analysis and long-term trend monitoring.
+| Feature | Type | Description |
+|---|---|---|
+| `year` | Numerical | Manufacturing year |
+| `mileage` | Numerical | Odometer reading (km) |
+| `engine_size` | Numerical | Engine displacement (L) |
+| `fuel_type` | Categorical | Petrol / Diesel / Electric / Hybrid |
+| `transmission` | Categorical | Manual / Automatic / Semi-Auto |
+| `make` | Categorical | Manufacturer (BMW, Toyota, Ford...) |
+| `model` | Categorical | Specific model name |
+| `price` | **Target** | Sale price (£) |
 
-## Key Features
-- **Real-time Telemetry Ingestion:** Supports high-throughput data streams from onboard diagnostic (OBD-II) sensors to ensure up-to-the-second vehicle status.
-- **Predictive Maintenance Alerts:** Leverages historical wear-and-tear data to trigger automated notifications before scheduled maintenance thresholds are exceeded.
-- **Unified Schema Normalization:** Converts heterogeneous data formats from various vehicle manufacturers into a standardized internal representation.
-- **Geospatial Tracking:** Integrates coordinate data to provide real-time location mapping and route optimization analysis for fleet vehicles.
-- **Role-Based Access Control (RBAC):** Ensures granular security by managing permissions for fleet managers, maintenance technicians, and administrative users.
-- **Historical Trend Reporting:** Provides comprehensive data visualization tools to analyze fuel consumption, engine efficiency, and driver behavior over extended periods.
+---
 
-## Technologies
-- **Python:** Used as the primary language for backend logic and data processing scripts.
-- **FastAPI:** Utilized for building high-performance, asynchronous RESTful APIs.
-- **Apache Kafka:** Serves as the message broker to manage high-volume telemetry data streams.
-- **PostgreSQL/TimescaleDB:** Used for structured relational data and optimized time-series storage.
-- **Docker:** Employed for containerization to ensure consistent deployment environments across development and production.
+## Feature Engineering
 
-## Getting Started
-To initialize the development environment, ensure that Docker and Docker Compose are installed on the host machine.
+```python
+# 1. Car age (more intuitive than year)
+df['age'] = 2024 - df['year']
 
-1. **Clone the repository:**
-   `git clone https://github.com/your-org/cars.git`
-2. **Environment Configuration:**
-   Copy the `.env.example` file to `.env` and populate the required database credentials and API keys.
-3. **Build and Run:**
-   Execute the following command to spin up the containerized services:
-   `docker-compose up --build`
-4. **Verification:**
-   Once the containers are running, navigate to `http://localhost:8000/docs` to view the interactive API documentation and verify that the services are responding correctly.
+# 2. Log-transform price (right-skewed)
+df['log_price'] = np.log1p(df['price'])
+
+# 3. Mileage per year (depreciation proxy)
+df['mileage_per_year'] = df['mileage'] / (df['age'] + 1)
+
+# 4. Premium brand flag
+premium_brands = ['BMW', 'Mercedes', 'Audi', 'Porsche', 'Lexus']
+df['is_premium'] = df['make'].isin(premium_brands).astype(int)
+
+# 5. Encode categoricals
+df = pd.get_dummies(df, columns=['fuel_type', 'transmission'])
+```
+
+---
+
+## Model Comparison
+
+| Model | RMSE (£) | MAE (£) | R² |
+|---|---|---|---|
+| Linear Regression | 4,821 | 3,102 | 0.73 |
+| Ridge (α=10) | 4,798 | 3,087 | 0.74 |
+| Lasso (α=1) | 4,834 | 3,118 | 0.73 |
+| Random Forest | 2,943 | 1,876 | 0.89 |
+| **XGBoost** | **2,611** | **1,654** | **0.92** |
+
+**XGBoost** achieves the best performance: RMSE £2,611 and R²=0.92.
+
+---
+
+## SHAP Feature Importance
+
+Top features by mean |SHAP value|:
+1. `age` — most important (depreciation dominates price)
+2. `mileage` — strong negative impact
+3. `engine_size` — positive for larger engines
+4. `is_premium` — significant premium brand effect
+5. `fuel_type_Electric` — positive premium for EVs
+
+---
+
+## XGBoost Hyperparameters (Final)
+
+```python
+xgb_model = XGBRegressor(
+    n_estimators=500,
+    max_depth=6,
+    learning_rate=0.05,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    reg_alpha=0.1,
+    reg_lambda=1.0,
+    random_state=42
+)
+```
+
+---
+
+## Installation
+
+```bash
+git clone https://github.com/tamer017/cars.git
+cd cars
+pip install scikit-learn xgboost pandas numpy matplotlib shap jupyter
+jupyter notebook
+```
+
+---
+
+## Skills & Concepts
+
+`Regression` `XGBoost` `Random Forest` `Ridge` `Lasso` `Feature Engineering` `SHAP` `Price Prediction` `Log Transformation` `Cross-Validation` `Automotive Analytics`
+
+---
+
+## Author
+
+**Ahmed Tamer Assy** — [GitHub](https://github.com/tamer017) | Machine Learning Researcher @ Volkswagen AG
